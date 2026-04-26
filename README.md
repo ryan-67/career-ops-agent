@@ -1,33 +1,50 @@
-# Career-Ops Agent
+# career-ops-agent
 
-An autonomous job search pipeline that runs on Apache Airflow. Every few days it scrapes LinkedIn and Indeed, scores each listing against your résumé using the Claude AI API, and delivers a ranked digest straight to Telegram — no manual searching required.
+An autonomous job search pipeline that scrapes job listings, scores them against your resume using the Claude API, and delivers ranked daily digests via Telegram — orchestrated with Apache Airflow on Docker.
+
+---
 
 ## How It Works
 
 ```
-Airflow DAG (every N days)
-  └─► scan_portals   — Apify scrapes LinkedIn + Indeed
-  └─► score_jobs     — Claude AI scores each listing vs. your CV (1–5)
-  └─► aggregate      — builds a ranked Markdown digest
-  └─► notify         — pushes digest to Telegram
+Airflow Scheduler (every 2 days at 8am)
+    │
+    ▼
+Task 1: scan_portals
+    └── Apify scrapes LinkedIn + Indeed for target roles
+    └── Filters by title keywords and deduplicates
+    │
+    ▼
+Task 2: score_jobs
+    └── Single Claude API call batch-scores all jobs against cv.md
+    └── Filters to top results above minimum score threshold
+    │
+    ▼
+Task 3: aggregate
+    └── Builds structured markdown digest with ranked results
+    └── Saves to agent/digests/digest-YYYY-MM-DD.md
+    │
+    ▼
+Task 4: notify
+    └── Sends digest via Telegram Bot API
+    └── You review recommendations and apply manually
 ```
 
-On each run the agent:
-1. Scrapes job portals via [Apify](https://apify.com/) actors (no brittle Selenium required)
-2. Filters out seniority levels and keywords you don't want (director, VP, clearance, etc.)
-3. Sends all listings to Claude as a single batch prompt — cheap and fast
-4. Returns only roles scored ≥ 3.5 / 5.0, sorted by fit
-5. Splits long digests across multiple Telegram messages automatically
+**Tier 2 (manual, on-demand):** For roles you want to pursue after reading the digest, run `/career-ops {url}` in Claude Code inside the `career-ops/` directory to get a full evaluation report, ATS-optimized resume PDF, and cover letter draft.
 
-## Stack
+---
 
-| Layer | Tech |
-|---|---|
-| Orchestration | Apache Airflow 2.9 (LocalExecutor) |
-| Scraping | Apify (LinkedIn + Indeed actors) |
-| AI Scoring | Anthropic Claude API (Haiku 4.5) |
-| Notifications | Telegram Bot API |
-| Infrastructure | Docker Compose + PostgreSQL 15 |
+## Tech Stack
+
+- **Orchestration:** Apache Airflow 2.9.1
+- **Containerization:** Docker + Docker Compose
+- **Scraping:** Apify (LinkedIn Jobs + Indeed scrapers)
+- **Scoring:** Anthropic Claude API (claude-haiku — batch scoring)
+- **Notification:** Telegram Bot API
+- **Deep Evaluation:** career-ops (Claude Code slash commands)
+- **Language:** Python 3.11
+
+---
 
 ## Project Structure
 
@@ -35,97 +52,187 @@ On each run the agent:
 career-ops-agent/
 ├── agent/
 │   ├── dags/
-│   │   └── career_ops_dag.py     # Airflow DAG definition
+│   │   └── career_ops_dag.py      # Airflow DAG — 4-task pipeline
 │   ├── tasks/
-│   │   ├── scanner.py            # Apify scraping (LinkedIn + Indeed)
-│   │   ├── scorer.py             # Claude AI batch scoring
-│   │   ├── aggregator.py         # Digest builder
-│   │   └── notifier.py           # Telegram delivery
+│   │   ├── scanner.py             # Apify scraping (LinkedIn + Indeed)
+│   │   ├── scorer.py              # Claude API batch scoring
+│   │   ├── aggregator.py          # Digest builder
+│   │   └── notifier.py            # Telegram delivery
 │   ├── config/
-│   │   └── agent_config.yml      # Search queries, scoring thresholds, schedule
+│   │   └── agent_config.yml       # Schedule, scoring, filter config
+│   ├── digests/                   # Generated digest files
 │   └── tests/
 │       ├── test_aggregator.py
 │       └── test_notifier.py
-├── career-ops/                   # CV + application tracker (submodule)
-├── Dockerfile                    # Extends apache/airflow:2.9.1
+├── career-ops/                    # Submodule — deep evaluation engine
 ├── docker-compose.yml
+├── Dockerfile
 ├── requirements.txt
-└── .env.example
+└── .env                           # Secrets (not committed)
 ```
 
-## Quickstart
+---
 
-### Prerequisites
+## Prerequisites
 
-- Docker Desktop
-- Accounts: [Apify](https://apify.com/), [Anthropic](https://console.anthropic.com/), Telegram bot token
+- Windows 11 with WSL2 enabled
+- Docker Desktop (WSL2 backend)
+- Anthropic API key — [console.anthropic.com](https://console.anthropic.com)
+- Apify account + API token — [apify.com](https://apify.com)
+- Telegram Bot token + chat ID — create via [@BotFather](https://t.me/botfather)
 
-### 1. Clone and configure
+---
 
-```bash
-git clone https://github.com/67rkim/career-ops-agent.git
+## Setup
+
+### 1. Clone the repo
+
+```powershell
+git clone https://github.com/ryan-67/career-ops-agent.git
 cd career-ops-agent
-cp .env.example .env
-# Fill in your API keys in .env
 ```
 
-### 2. Edit your search config
+### 2. Create your `.env` file
 
-Open `agent/config/agent_config.yml` and set your target roles, locations, and scoring thresholds:
-
-```yaml
-scraping:
-  linkedin_queries:
-    - query: "Data Engineer"
-      location: "United States"
-  max_results_per_query: 25
-
-scoring:
-  min_score: 3.5          # Only show jobs scoring above this
-  max_results_in_digest: 15
-
-schedule:
-  interval_days: 2        # Run every 2 days
+```
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+APIFY_API_TOKEN=apify_api_your-token-here
+TELEGRAM_BOT_TOKEN=your-bot-token-here
+TELEGRAM_CHAT_ID=your-chat-id-here
+AIRFLOW_UID=50000
+AIRFLOW_GID=0
+_AIRFLOW_WWW_USER_USERNAME=admin
+_AIRFLOW_WWW_USER_PASSWORD=admin
 ```
 
-### 3. Add your résumé
+### 3. Add your resume
 
-Place `cv.md` inside the `career-ops/` directory (Markdown format). The scorer reads this on every run to evaluate fit.
+Place your resume as `career-ops/cv.md` in markdown format.
 
-### 4. Start Airflow
+### 4. Configure your profile
 
-```bash
-# First run only — initializes DB and admin user
+Edit `career-ops/config/profile.yml` with your target roles, skills, and compensation preferences.
+
+### 5. Configure portals (optional)
+
+Edit `career-ops/portals.yml` to customize which companies career-ops scans for Tier 2 deep evaluations.
+
+### 6. Configure the agent
+
+Edit `agent/config/agent_config.yml` to set:
+- Scraping queries and sources
+- Scoring thresholds
+- Schedule frequency
+- Notification preferences
+
+### 7. Initialize and launch
+
+```powershell
+# First time only
 docker compose up airflow-init
 
-# Start all services
-docker compose up -d
+# Start everything
+docker compose up --build -d
 
-# Open Airflow UI
-open http://localhost:8080
+# Verify containers are healthy
+docker compose ps
 ```
 
-Unpause the `career_ops_agent` DAG in the Airflow UI, or trigger it manually.
+### 8. Access Airflow UI
 
-## Configuration Reference
+Open `http://localhost:8080` — login with `admin / admin`
 
-`agent/config/agent_config.yml` controls everything:
+Enable the `career_ops_agent` DAG and trigger a manual run to test.
 
-| Key | Default | Description |
-|---|---|---|
-| `schedule.interval_days` | `2` | How often the DAG runs |
-| `scraping.sources` | `[linkedin, indeed]` | Portals to scrape |
-| `scraping.max_results_per_query` | `25` | Listings pulled per search query |
-| `scoring.min_score` | `3.5` | Minimum Claude score to include in digest |
-| `scoring.max_results_in_digest` | `15` | Max roles sent to Telegram |
-| `filters.exclude_keywords` | `[director, VP, ...]` | Title keywords to skip |
+---
 
-## Security
+## Configuration
 
-- All secrets are loaded from `.env` (gitignored)
-- `.env.example` shows required keys — never contains real values
-- Set a strong `FERNET_KEY` in `.env` before any production use
+Key settings in `agent/config/agent_config.yml`:
 
-## License
+```yaml
+schedule:
+  interval_days: 2          # Run every N days
+  start_time: "08:00"       # Time of day (local)
 
-MIT
+scraping:
+  max_results_per_query: 25 # Jobs per search query
+
+scoring:
+  min_score: 3.5            # Minimum fit score (1-5) to include in digest
+  max_results_in_digest: 15 # Max jobs per Telegram message
+
+filters:
+  exclude_keywords:         # Job titles to skip
+    - "director"
+    - "manager"
+    - "senior staff"
+```
+
+---
+
+## Daily Usage
+
+1. **Receive Telegram digest** every 2 days with ranked job recommendations
+2. **Review the list** — each entry includes company, role, fit score, reason, location, and apply link
+3. **Apply directly** using the links provided
+4. **Deep dive on top roles** using Tier 2:
+
+```bash
+cd career-ops
+claude --dangerously-skip-permissions
+/career-ops {paste job URL}
+```
+
+This generates a full evaluation report, ATS-optimized resume PDF tailored to the role, and a cover letter draft.
+
+---
+
+## After a PC Restart
+
+Docker containers stop when your PC shuts down. To bring them back up:
+
+```powershell
+cd D:\Projects\career-ops-agent
+docker compose up -d
+```
+
+To avoid this, enable **"Start Docker Desktop when you log in"** in Docker Desktop settings. Containers are configured with `restart: unless-stopped` and will come back automatically once Docker starts.
+
+---
+
+## Running Tests
+
+```powershell
+docker compose exec airflow-webserver pytest /opt/airflow/agent/tests -v
+```
+
+---
+
+## Cost Estimate
+
+| Component | Cost |
+|-----------|------|
+| Apify scraping (~100 jobs) | ~$0.05/run |
+| Claude API batch scoring | ~$0.03/run |
+| Telegram delivery | Free |
+| **Per run total** | **~$0.08** |
+| **Monthly (15 runs)** | **~$1.20** |
+
+Set a spending limit at [console.anthropic.com](https://console.anthropic.com) to avoid surprises.
+
+---
+
+## Architecture Notes
+
+- **Tier 1 (this repo):** Cheap autonomous discovery — Apify scrapes, Claude batch-scores, Telegram delivers
+- **Tier 2 (career-ops submodule):** On-demand deep evaluation — full report, tailored PDF, cover letter per role
+- Airflow uses `LocalExecutor` with PostgreSQL metadata backend
+- All secrets loaded from `.env` — never committed to git
+- Digests saved locally to `agent/digests/` for reference
+
+---
+
+## Related
+
+- [career-ops](https://github.com/santifer/career-ops) — the deep evaluation engine powering Tier 2
