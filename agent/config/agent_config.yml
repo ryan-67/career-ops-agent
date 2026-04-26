@@ -1,0 +1,59 @@
+schedule:
+  interval_days: 2
+  start_time: "08:00"
+  timezone: "America/Los_Angeles"
+
+scraping:
+  sources:
+    - linkedin
+    - indeed
+  linkedin_queries:
+    - query: "Data Engineer"
+      location: "United States"
+      remote_only: false
+    - query: "Analytics Engineer"
+      location: "United States"
+      remote_only: false
+    - query: "AI Engineer"
+      location: "United States"
+      remote_only: false
+    - query: "Software Engineer Data"
+      location: "United States"
+      remote_only: false
+  indeed_queries:
+    - query: "Data Engineer"
+      location: "United States"
+    - query: "Analytics Engineer"
+      location: "United States"
+  max_results_per_query: 25
+  apify_linkedin_actor: "curiosity_dragon/linkedin-jobs-scraper"
+  apify_indeed_actor: "misceres/indeed-scraper"
+
+scoring:
+  min_score: 3.5
+  max_results_in_digest: 15
+  batch_size: 50
+
+digest:
+  output_path: "/opt/airflow/agent/digests"
+  lookback_hours: 48
+
+notification:
+  platform: "telegram"
+  send_on_empty: true
+
+career_ops:
+  path: "/opt/airflow/career-ops"
+
+filters:
+  exclude_keywords:
+    - "senior staff"
+    - "principal"
+    - "director"
+    - "vp "
+    - "vice president"
+    - "head of"
+    - "manager"
+    - "clearance required"
+    - "security clearance"
+  require_us_location: true

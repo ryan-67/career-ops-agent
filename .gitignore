@@ -1,0 +1,12 @@
+﻿.env
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+node_modules/
+career-ops/node_modules/
+logs/
+airflow-logs/
+agent/digests/
+*.log
+.DS_Store
